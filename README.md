@@ -11,7 +11,7 @@ DeserializationExploit — Exploração de vulnerabilidades de desserialização
 
 BannerGrabber — Captura de banner via socket
 
-DNSExfiltrationExample — Exfiltração via DNS (simulada)
+DNSExfiltrationExample — Exfiltração via DNS 
 
 ConfigFilePasswordFinder — Busca por arquivos de configuração com senhas expostas
 
@@ -25,7 +25,7 @@ SSTIExploit — Exploração de SSTI (Server-Side Template Injection)
 
 XXEExploit — Exploração de XXE (XML External Entity)
 
-FileUploadExploit — Upload de arquivos (exemplo de vulnerabilidade)
+FileUploadExploit — Upload de arquivos 
 
 HTTPMethodsScanner — Scanner dos métodos HTTP aceitos por uma URL
 
