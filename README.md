@@ -1,55 +1,42 @@
 Blackspecter
 Todos os módulos:
 
-sqliautoexploit
-Exploração automática de SQL Injection (não implementado no código, só listado no help)
+SQLIAutoExploit — Exploração automática de SQL Injection
 
-rceupload
-Upload para execução remota de comandos (exemplo de RCE via upload — não implementado no código acima)
+RCEUpload — Upload para execução remota de código
 
-phishingsimple
-Ataque phishing simples (exibe URL para phishing — não implementado)
+PhishingSimple — Ataque simples de phishing (exibição de URL)
 
-deserializationexploit
-Exploração de vulnerabilidade de deserialização (ex: Python inseguro — implementado)
+DeserializationExploit — Exploração de vulnerabilidades de desserialização insegura
 
-bannergrabber
-Captura banners em portas abertas (não implementado no código acima)
+BannerGrabber — Captura de banner via socket
 
-dnsexfiltrationexample
-Exfiltra dados via consultas DNS (não implementado)
+DNSExfiltrationExample — Exfiltração via DNS (simulada)
 
-configfilepasswordfinder
-Busca arquivos de configuração com senhas expostas (não implementado)
+ConfigFilePasswordFinder — Busca por arquivos de configuração com senhas expostas
 
-portscannerwithbanner
-Scanner de portas com captura de banners (não implementado)
+PortScannerWithBanner — Scanner de portas com captura de banner
 
-ldapinjectionexploit
-Exploração de LDAP Injection (não implementado)
+LDAPInjectionExploit — Exploração de LDAP Injection
 
-ssrfexploit
-Exploração de SSRF (implementado via upload abuse)
+SSRFExploit — Exploração de SSRF (Server-Side Request Forgery)
 
-sstiexploit
-Exploração de SSTI (Server Side Template Injection) (não implementado)
+SSTIExploit — Exploração de SSTI (Server-Side Template Injection)
 
-xxeexploit
-Teste de vulnerabilidade XXE (não implementado)
+XXEExploit — Exploração de XXE (XML External Entity)
 
-weaksshcredscheck
-Teste de credenciais SSH fracas (ex: sudo privilege escalation check)
+FileUploadExploit — Upload de arquivos (exemplo de vulnerabilidade)
 
-cmdinjectionexploit
-Exploração de injeção de comandos (implementado)
+HTTPMethodsScanner — Scanner dos métodos HTTP aceitos por uma URL
 
-phpsessionfixation
-Teste de fixação de sessão PHP (não implementado)
+PortScanner — Scanner básico de portas TCP
 
-csrfattack
-Exploração de CSRF (não implementado)
+SSHScanner — Brute force SSH básico usando Paramiko
 
-cve2023example
-Exemplo de exploit para CVE 2023 (não implementado)
+PHPInfoScanner — Busca por arquivos phpinfo expostos
 
-frameworkoptions
+JenkinsScanner — Busca por instância Jenkins acessível
+
+XSSScanner — Teste simples de vulnerabilidade XSS
+
+CVEExploit — Exploração genérica para um CVE qualquer 
