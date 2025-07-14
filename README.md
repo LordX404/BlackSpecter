@@ -19,7 +19,7 @@ Módulos Python:
 pip install requests
 
 Como usar:
-python exploit_real.py <target_url> [opções]
+python BlackSpecter.py <target_url> [opções]
 Parâmetros
 <target_url>: URL base do alvo (ex: http://site-vulneravel.com)
 
